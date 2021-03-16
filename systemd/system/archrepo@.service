@@ -1,0 +1,9 @@
+[Service]
+Type=notify
+EnvironmentFile=/etc/archrepo.d/archrepo.conf
+WorkingDirectory=/srv/http/archrepo/%i
+
+ExecStart=/etc/systemd/scripts/archrepo
+
+ExecStartPre=/usr/bin/sleep 1
+ExecStartPost=/usr/bin/sleep 1

@@ -1,0 +1,5 @@
+[Path]
+PathChanged=/srv/http/archrepo/%i
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+#!/bin/bash
+
+export DBNAME=$(basename "$(pwd)")
+export DBPATH=$DBNAME.db.tar.zst
+
+main() {
+    local data diff
+
+    if [[ ! -f $DBPATH ]]; then
+        echo "Database does not exists, than creating empty one"
+        repo-add -q ${GPGKEY:+-s} -n -R "$DBPATH"
+    elif [[ $(tar -t --zstd -f "$DBPATH" | grep -c '.*/desc$') -gt 0 ]]; then
+        data=$(
+            tar -x --zstd -f "$DBPATH" --wildcards '*/desc' --to-stdout |
+                awk '/%FILENAME%/ { getline; printf $0 " " } /%NAME%/ { getline; print }'
+        )
+    fi
+
+    diff=$(diff -d \
+        <(awk '$1 != "" { print $1 }' <<<"$data") \
+        <(find . -maxdepth 1 -type f -regex '.+\.pkg\.tar\.\w+' | sed 's|./||') |
+        grep '^[<>]' | sort -k2 | uniq -uf1)
+
+    [ -z "$diff" ] && return 1
+
+    mapfile -t pkg_remove < <(sort -rk2 \
+        <(awk '{ print $2, $1 }' <<<"$data") \
+        <(awk '$1 == "<" { print }' <<<"$diff") |
+        uniq -df1 | cut -d' ' -f1)
+
+    for pkg in "${pkg_remove[@]}"; do
+        systemd-notify --status="Removing $pkg"
+        echo "Removing $pkg"
+        repo-remove -q ${GPGKEY:+-s} "$DBPATH" "$pkg"
+    done
+
+    mapfile -t pkg_add < <(awk '$1 == ">" { print $2 }' <<<"$diff")
+    for pkg in "${pkg_add[@]}"; do
+        [ ! -f "$pkg" ] && continue
+        systemd-notify --status="Signing $pkg"
+        echo "Signing $pkg"
+        [ -n "$GPGKEY" ] && gpg --batch --default-key "$GPGKEY" -qbo "$pkg.sig" "$pkg"
+        systemd-notify --status="Adding $pkg"
+        echo "Adding $pkg"
+        repo-add -q ${GPGKEY:+-s} -n -R "$DBPATH" "$pkg"
+        [ -n "$GPGKEY" ] && rm -f "$pkg.sig"
+    done
+}
+
+set -e
+systemd-notify --ready
+
+while main; do sleep 1; done
+
+systemd-notify --status=
+exit 0
